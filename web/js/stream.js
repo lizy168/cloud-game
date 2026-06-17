@@ -30,33 +30,34 @@ const state = {
     autoplayWait: false,
 };
 
-const flip = (flip) => (videoEl.style.transform = flip ? "scaleY(-1)" : "");
 const mute = (mute) => (videoEl.muted = mute);
+
+const applyTransform = () => {
+    const rot = state.rot ? `rotate(${-state.rot}deg)` : "";
+    const flip = state.flip ? "scaleY(-1)" : "";
+    mirrorEl.style.transform = rot;
+    videoEl.style.transform = [rot, flip].filter(Boolean).join(" ");
+};
 
 const onPlay = () => {
     state.ready = true;
     videoEl.poster = "";
-    flip(state.flip);
+    applyTransform();
     resize(state.w, state.h, state.aspect, state.fit);
     useCustomScreen(options.mirrorMode === "mirror");
 };
 
-const play = () => {
-    const promise = videoEl.play();
-
-    if (promise === undefined) {
-        log.error("oh no, the video is not a promise!");
-        return;
-    }
-
-    promise.then(onPlay).catch((error) => {
-        if (error.name === "NotAllowedError") {
-            showPlayButton();
-        } else {
-            log.error("Playback fail", error);
-        }
-    });
-};
+const play = () =>
+    videoEl
+        .play()
+        ?.then(onPlay)
+        .catch((error) => {
+            if (error.name === "NotAllowedError") {
+                showPlayButton();
+            } else {
+                log.error("Playback fail", error);
+            }
+        });
 
 const toggle = (show) =>
     state.screen.toggleAttribute("hidden", show === undefined ? show : !show);
@@ -71,6 +72,37 @@ const resize = (w, h, aspect, fit) => {
     }
     if (fit !== undefined) {
         state.screen.style["object-fit"] = fit;
+    }
+
+    // properly size the element for rotated view
+    if (state.rot && Math.abs(state.rot % 180) > 1) {
+        const fullscreen = document.fullscreenElement !== null;
+        const ch = fullscreen
+            ? window.innerHeight
+            : state.screen.parentElement.clientHeight;
+        if (ch && state.aspect) {
+            const availableH = ch - (fullscreen ? 14 : 0);
+            const fw = availableH;
+            const fh = Math.round(availableH * state.aspect);
+            const shift = (availableH - fh) / 2;
+            const rot = `rotate(${-state.rot}deg)`;
+            const flp =
+                state.flip && state.screen === videoEl ? "scaleY(-1)" : "";
+            state.screen.style.width = fw + "px";
+            state.screen.style.height = fh + "px";
+            state.screen.style.objectFit = "fill";
+            state.screen.style.position = "relative";
+            state.screen.style.top = "0";
+            state.screen.style.transform =
+                `translateY(${shift}px) ${rot} ${flp}`.trim();
+        }
+    } else {
+        state.screen.style.width = "";
+        state.screen.style.height = "";
+        state.screen.style.position = "";
+        state.screen.style.top = "";
+        // hack: cover 1px edge artifact
+        state.screen.style.marginLeft = state.flip ? "1px" : "";
     }
 };
 
@@ -105,19 +137,31 @@ videoEl.onerror = (e) => log.error("Playback error", e);
 const onFullscreen = (fullscreen) => {
     const el = document.fullscreenElement;
 
+    state.screen.parentElement.style.overflow = fullscreen ? "visible" : "";
+
     if (fullscreen) {
         // timeout is due to a chrome bug
         setTimeout(() => {
-            // aspect ratio calc
-            const w = window.screen.width ?? window.innerWidth;
-            const hh = el.innerHeight || el.clientHeight || 0;
-            const dw = (w - hh * state.aspect) / 2;
-            state.screen.style.padding = `0 ${dw}px`;
+            // aspect ratio calc (skip for rotated - resize handles it)
+            if (!(state.rot && Math.abs(state.rot % 180) > 1)) {
+                const w = window.screen.width ?? window.innerWidth;
+                const hh = el.innerHeight || el.clientHeight || 0;
+                const dw = (w - hh * state.aspect) / 2;
+                state.screen.style.padding = `0 ${dw}px`;
+            } else {
+                // clear any leftover padding for rotated content
+                state.screen.style.padding = "0";
+            }
             state.screen.classList.toggle("with-footer");
+            // re-apply transform in case fullscreen transition reset it
+            applyTransform();
+            resize(state.w, state.h, state.aspect, state.fit);
         }, 1);
     } else {
         state.screen.style.padding = "0";
         state.screen.classList.toggle("with-footer");
+        applyTransform();
+        resize(state.w, state.h, state.aspect, state.fit);
     }
 
     if (el === videoEl) {
@@ -155,11 +199,20 @@ const useCustomScreen = (use) => {
 
         toggle(false);
         state.screen = mirrorEl;
-        resize(videoEl.videoWidth, videoEl.videoHeight);
+        applyTransform();
+        resize(
+            videoEl.videoWidth,
+            videoEl.videoHeight,
+            state.aspect,
+            state.fit,
+        );
 
-        // stretch depending on the video orientation
-        const isPortrait = videoEl.videoWidth < videoEl.videoHeight;
-        state.screen.style.width = isPortrait ? "auto" : videoEl.videoWidth;
+        // stretch depending on the video orientation (skip when rotated -
+        // resize handles the sizing)
+        if (!(state.rot && Math.abs(state.rot % 180) > 1)) {
+            const isPortrait = videoEl.videoWidth < videoEl.videoHeight;
+            state.screen.style.width = isPortrait ? "auto" : videoEl.videoWidth;
+        }
 
         let surface = state.screen.getContext("2d");
         if (state.ready) {
@@ -179,6 +232,7 @@ const useCustomScreen = (use) => {
         clearInterval(state.timerId);
         toggle(false);
         state.screen = videoEl;
+        mirrorEl.style.transform = "";
         if (state.ready) {
             toggle(true);
         }
@@ -199,12 +253,11 @@ const init = () => {
 };
 
 sub(APP_VIDEO_CHANGED, (payload) => {
-    const { w, h, a, s, flip } = payload;
+    const { w, h, a, s, flip, rot } = payload;
 
-    if (flip !== undefined) {
-        state.flip = flip;
-        if (state.ready) flip();
-    }
+    if (flip !== undefined) state.flip = flip;
+    if (rot !== undefined) state.rot = rot;
+    if (state.ready) applyTransform();
 
     const scale = !s ? 1 : s;
     const ww = w * scale;
@@ -212,15 +265,13 @@ sub(APP_VIDEO_CHANGED, (payload) => {
 
     state.aspect = a;
 
-    const a2 = (ww / hh).toFixed(6);
-
     state.h = hh;
     state.w = Math.floor(hh * a);
     resize(
         ww,
         hh,
         state.aspect,
-        a > 1 && a.toFixed(6) !== a2 ? "fill" : "contain",
+        a > 1 && a.toFixed(6) !== (ww / hh).toFixed(6) ? "fill" : "contain",
     );
     recalculateSize();
 });

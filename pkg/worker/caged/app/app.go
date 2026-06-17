@@ -1,5 +1,7 @@
 package app
 
+import "time"
+
 type App interface {
 	AudioSampleRate() int
 	AspectRatio() float32
@@ -7,7 +9,9 @@ type App interface {
 	Flipped() bool
 	Init() error
 	ViewportSize() (int, int)
-	Scale() float64
+	Scale() (float64, string)
+	Rotation() uint
+	PixFormat() uint32
 	Start()
 	Close()
 
@@ -19,13 +23,13 @@ type App interface {
 }
 
 type Audio struct {
-	Data     []int16
-	Duration int32 // up to 6y nanosecond-wise
+	Data     []byte
+	Duration time.Duration
 }
 
 type Video struct {
 	Frame    RawFrame
-	Duration int32
+	Duration time.Duration
 }
 
 type RawFrame struct {

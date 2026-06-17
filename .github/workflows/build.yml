@@ -4,85 +4,82 @@
 
 name: build
 on:
-  push:
-    branches:
-      - master
-    tags-ignore:
-      - 'v*'
-  pull_request:
-    branches:
-      - master
+    push:
+        branches:
+            - master
+        tags-ignore:
+            - "v*"
+    pull_request:
+        branches:
+            - master
 
 jobs:
+    build:
+        strategy:
+            matrix:
+                os: [ubuntu-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        steps:
+            - uses: actions/checkout@v4
 
-  build:
-    strategy:
-      matrix:
-        os: [ ubuntu-latest, windows-latest ]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
+            - uses: actions/setup-go@v5
+              with:
+                  go-version: "stable"
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
+            - name: Linux
+              if: matrix.os == 'ubuntu-latest'
+              env:
+                  MESA_GL_VERSION_OVERRIDE: 3.3COMPAT
+              run: |
+                  sudo apt-get -qq update
+                  sudo apt-get -qq install -y \
+                    make pkg-config \
+                    libsdl2-dev libgl1 libglx-mesa0 \
+                    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+                    gstreamer1.0-plugins-good
 
-      - name: Linux
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          MESA_GL_VERSION_OVERRIDE: 3.3COMPAT
-        run: |
-          sudo apt-get -qq update
-          sudo apt-get -qq install -y \
-            make pkg-config \
-            libvpx-dev libx264-dev libopus-dev libyuv-dev libjpeg-turbo8-dev \
-            libsdl2-dev libgl1 libglx-mesa0 libspeexdsp-dev
-          
-          make build
-          xvfb-run --auto-servernum make test verify-cores
+                  make build
+                  xvfb-run --auto-servernum make test verify-cores
 
-      - name: macOS
-        if: matrix.os == 'macos-12'
-        run: |
-          brew install libvpx x264 sdl2 speexdsp
-          make build test verify-cores
+            - name: macOS
+              if: matrix.os == 'macos-12'
+              run: |
+                  brew install sdl2 gstreamer gst-plugins-base gst-plugins-good
+                  make build test verify-cores
 
-      - uses: msys2/setup-msys2@v2
-        if: matrix.os == 'windows-latest'
-        with:
-          msystem: ucrt64
-          path-type: inherit
-          release: false
-          install: >
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-dlfcn
-            mingw-w64-ucrt-x86_64-libvpx
-            mingw-w64-ucrt-x86_64-opus
-            mingw-w64-ucrt-x86_64-libx264
-            mingw-w64-ucrt-x86_64-SDL2
-            mingw-w64-ucrt-x86_64-libyuv
-            mingw-w64-ucrt-x86_64-libjpeg-turbo
-            mingw-w64-ucrt-x86_64-speexdsp
+            - uses: msys2/setup-msys2@v2
+              if: matrix.os == 'windows-latest'
+              with:
+                  msystem: ucrt64
+                  path-type: inherit
+                  release: false
+                  install: >
+                      mingw-w64-ucrt-x86_64-gcc
+                      mingw-w64-ucrt-x86_64-pkgconf
+                      mingw-w64-ucrt-x86_64-dlfcn
+                      mingw-w64-ucrt-x86_64-SDL2
+                      mingw-w64-ucrt-x86_64-gstreamer
+                      mingw-w64-ucrt-x86_64-gst-plugins-base
+                      mingw-w64-ucrt-x86_64-gst-plugins-good
 
-      - name: Windows
-        if: matrix.os == 'windows-latest'
-        env:
-          MESA_VERSION: '24.0.7'
-          MESA_GL_VERSION_OVERRIDE: 3.3COMPAT
-        shell: msys2 {0}
-        run: |
-          set MSYSTEM=UCRT64
-          
-          wget -q https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_VERSION/mesa3d-$MESA_VERSION-release-msvc.7z
-          "/c/Program Files/7-Zip/7z.exe" x mesa3d-$MESA_VERSION-release-msvc.7z -omesa
-          echo -e " 1\r\n 9\r\n " >> commands
-          ./mesa/systemwidedeploy.cmd < ./commands
-          
-          make build test verify-cores
+            - name: Windows
+              if: matrix.os == 'windows-latest'
+              env:
+                  MESA_VERSION: "24.0.7"
+                  MESA_GL_VERSION_OVERRIDE: 3.3COMPAT
+              shell: msys2 {0}
+              run: |
+                  set MSYSTEM=UCRT64
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: emulator-test-frames-${{ matrix.os }}
-          path: _rendered/*.png
+                  wget -q https://github.com/pal1000/mesa-dist-win/releases/download/$MESA_VERSION/mesa3d-$MESA_VERSION-release-msvc.7z
+                  "/c/Program Files/7-Zip/7z.exe" x mesa3d-$MESA_VERSION-release-msvc.7z -omesa
+                  echo -e " 1\r\n 9\r\n " >> commands
+                  ./mesa/systemwidedeploy.cmd < ./commands
+
+                  make build test verify-cores
+
+            - uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: emulator-test-frames-${{ matrix.os }}
+                  path: _rendered/*.png

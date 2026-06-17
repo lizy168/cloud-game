@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -47,14 +48,16 @@ type Emulator interface {
 	Close()
 	// Input passes input to the emulator
 	Input(player int, device byte, data []byte)
-	// Scale returns set video scale factor
-	Scale() float64
+	// Scale returns set video scale factor and method
+	Scale() (float64, string)
 	Reset()
 }
 
 type Frontend struct {
 	conf    config.Emulator
 	done    chan struct{}
+	doneEvt chan struct{} // closed when Start() fully exits
+	closed  atomic.Bool
 	log     *logger.Logger
 	nano    *nanoarch.Nanoarch
 	onAudio func(app.Audio)
@@ -62,11 +65,16 @@ type Frontend struct {
 	onVideo func(app.Video)
 	storage Storage
 	scale   float64
+	scaleM  string
 	isGL    bool
 	th      int // draw threads
 	vw, vh  int // out frame size
 
 	// directives
+
+	// SpinBatch batches nanotime checks in the spin loop.
+	// Higher values = check every N iterations, reducing syscall overhead.
+	SpinBatch int
 
 	// skipVideo used when new frame was too late
 	skipVideo bool
@@ -128,14 +136,15 @@ func NewFrontend(conf config.Emulator, log *logger.Logger) (*Frontend, error) {
 
 	// set global link to the Libretro
 	f := &Frontend{
-		conf:    conf,
-		done:    make(chan struct{}),
-		log:     log,
-		onAudio: noAudio,
-		onData:  noData,
-		onVideo: noVideo,
-		storage: store,
-		th:      conf.Threads,
+		conf:      conf,
+		done:      make(chan struct{}),
+		log:       log,
+		onAudio:   noAudio,
+		onData:    noData,
+		onVideo:   noVideo,
+		storage:   store,
+		th:        conf.Threads,
+		SpinBatch: 2048, // ~ 3GHz 3M / 2048 calls
 	}
 	f.linkNano(nano)
 
@@ -187,6 +196,7 @@ func (f *Frontend) LoadCore(emu string) {
 	}
 	f.storage.SetNonBlocking(conf.NonBlockingSave)
 	f.scale = scale
+	f.scaleM = conf.ScaleMethod
 	f.isGL = conf.IsGlAllowed
 	f.nano.CoreLoad(meta)
 	f.mu.Unlock()
@@ -198,14 +208,14 @@ func (f *Frontend) handleAudio(audio unsafe.Pointer, samples int) {
 		fr = new(app.Audio)
 	}
 	// !to look if we need a copy
-	fr.Data = unsafe.Slice((*int16)(audio), samples)
+	fr.Data = unsafe.Slice((*byte)(audio), samples<<1)
 	// due to audio buffering for opus fixed frames and const duration up in the hierarchy,
 	// we skip Duration here
 	f.onAudio(*fr)
 	audioPool.Put(fr)
 }
 
-func (f *Frontend) handleVideo(data []byte, delta int32, fi nanoarch.FrameInfo) {
+func (f *Frontend) handleVideo(data []byte, delta time.Duration, fi nanoarch.FrameInfo) {
 	if f.conf.SkipLateFrames && f.skipVideo {
 		return
 	}
@@ -278,7 +288,8 @@ func (f *Frontend) Start() {
 
 	f.mui.Lock()
 	f.done = make(chan struct{})
-	f.nano.LastFrameTime = time.Now().UnixNano()
+	f.doneEvt = make(chan struct{})
+	f.nano.LastFrameTime = time.Now()
 
 	defer func() {
 		// Save game on quit if it was saved before (shared or click-saved).
@@ -290,6 +301,7 @@ func (f *Frontend) Start() {
 		}
 		f.mui.Unlock()
 		f.Shutdown()
+		close(f.doneEvt)
 	}()
 
 	if f.HasSave() {
@@ -308,7 +320,6 @@ func (f *Frontend) Start() {
 
 	// The main loop of Libretro
 
-	// calculate the exact duration required for a frame (e.g., 16.666ms = 60 FPS)
 	targetFrameTime := time.Duration(float64(time.Second) / f.nano.VideoFramerate())
 
 	// stop sleeping and start spinning in the remaining 1ms
@@ -317,6 +328,8 @@ func (f *Frontend) Start() {
 	// how many frames will be considered not normal
 	const lateFramesThreshold = 3
 
+	batch := max(f.SpinBatch, 1)
+
 	lastFrameStart := time.Now()
 
 	for {
@@ -324,11 +337,11 @@ func (f *Frontend) Start() {
 		case <-f.done:
 			return
 		default:
-			// run one tick of the emulation
 			f.Tick()
 
 			elapsed := time.Since(lastFrameStart)
 			sleepTime := targetFrameTime - elapsed
+			deadline := lastFrameStart.Add(targetFrameTime)
 
 			if sleepTime > 0 {
 				// SLEEP
@@ -340,9 +353,15 @@ func (f *Frontend) Start() {
 
 				// SPIN
 				// if we are close to the target,
-				// burn CPU and check the clock with ns resolution
-				for time.Since(lastFrameStart) < targetFrameTime {
-					// CPU burn!
+				// burn CPU and check the clock with ns resolution.
+				// SpinBatch batches the time check to reduce
+				// syscall overhead while keeping sub-us precision.
+				for {
+					for range batch - 1 {
+					}
+					if !time.Now().Before(deadline) {
+						break
+					}
 				}
 				f.skipVideo = false
 			} else {
@@ -394,7 +413,7 @@ func (f *Frontend) Rotation() uint                { return f.nano.Rot }
 func (f *Frontend) SRAMPath() string              { return f.storage.GetSRAMPath() }
 func (f *Frontend) SaveGameState() error          { return f.Save() }
 func (f *Frontend) SaveStateName() string         { return filepath.Base(f.HashPath()) }
-func (f *Frontend) Scale() float64                { return f.scale }
+func (f *Frontend) Scale() (float64, string)      { return f.scale, f.scaleM }
 func (f *Frontend) SetAudioCb(cb func(app.Audio)) { f.onAudio = cb }
 func (f *Frontend) SetSessionId(name string)      { f.storage.SetMainSaveName(name) }
 func (f *Frontend) SetDataCb(cb func([]byte))     { f.onData = cb }
@@ -429,11 +448,20 @@ func (f *Frontend) ViewportCalc() (nw int, nh int) {
 
 func (f *Frontend) Close() {
 	f.log.Debug().Msgf("frontend close")
+	if f.closed.Swap(true) {
+		return
+	}
 	close(f.done)
 
 	f.mui.Lock()
 	f.nano.Close()
+	f.mui.Unlock()
 
+	if f.doneEvt != nil {
+		<-f.doneEvt
+	}
+
+	f.mui.Lock()
 	if f.UniqueSaveDir && !f.HasSave() {
 		if err := f.nano.DeleteSaveDir(); err != nil {
 			f.log.Error().Msgf("couldn't delete save dir: %v", err)

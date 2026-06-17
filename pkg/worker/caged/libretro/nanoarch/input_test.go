@@ -250,14 +250,15 @@ func TestKeyboardState_IsPressed(t *testing.T) {
 	}
 
 	// Press key
+	k := uint(42)
 	ks.SetKey([]byte{0, 0, 0, 42, 1, 0, 0})
-	if (ks.keys[42/64].Load()>>(42%64))&1 != 1 {
+	if (ks.keys[k/64].Load()>>(k%64))&1 != 1 {
 		t.Error("key should be pressed")
 	}
 
 	// Release key
 	ks.SetKey([]byte{0, 0, 0, 42, 0, 0, 0})
-	if (ks.keys[42/64].Load()>>(42%64))&1 != 0 {
+	if (ks.keys[k/64].Load()>>(k%64))&1 != 0 {
 		t.Error("key should be released")
 	}
 }

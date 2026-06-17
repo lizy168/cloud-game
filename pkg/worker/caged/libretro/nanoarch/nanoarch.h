@@ -35,4 +35,10 @@ void same_thread(void *f);
 void *same_thread_with_args2(void *f, int type, void *arg1, void *arg2);
 void same_thread_stop();
 
+static inline void call_audio_buffer_status(
+	struct retro_audio_buffer_status_callback *cb,
+	bool active, unsigned occupancy, bool underrun) {
+	if (cb && cb->callback) cb->callback(active, occupancy, underrun);
+}
+
 #endif

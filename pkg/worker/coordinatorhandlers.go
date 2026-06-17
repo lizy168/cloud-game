@@ -110,7 +110,7 @@ func (c *coordinator) HandleGameStart(rq api.StartGameRequest, w *Worker) api.Ou
 		}
 		game := games.GameMetadata(gameInfo)
 
-		r = room.NewRoom[*room.GameSession](uid, nil, w.router.Users(), nil)
+		r = room.NewRoom(uid, nil, w.router.Users(), nil)
 		r.HandleClose = func() {
 			c.CloseRoom(uid)
 			c.log.Debug().Msgf("room close request %v sent", uid)
@@ -134,18 +134,16 @@ func (c *coordinator) HandleGameStart(rq api.StartGameRequest, w *Worker) api.Ou
 
 		r.SetApp(app)
 
-		m := media.NewWebRtcMediaPipe(w.conf.Encoder.Audio, w.conf.Encoder.Video, w.log)
+		m := media.NewGstreamer(w.conf.Encoder, w.log)
 
 		// recreate the video encoder
 		app.VideoChangeCb(func() {
 			app.ViewportRecalculate()
 			m.VideoW, m.VideoH = app.ViewportSize()
-			m.VideoScale = app.Scale()
+			m.VideoScale, m.ScaleMethod = app.Scale()
 
-			if m.IsInitialized() {
-				if err := m.Reinit(); err != nil {
-					c.log.Error().Err(err).Msgf("reinit fail")
-				}
+			if err := m.Reinit(); err != nil {
+				c.log.Error().Err(err).Msgf("reinit fail")
 			}
 
 			data, err := api.Wrap(api.Out{
@@ -154,8 +152,10 @@ func (c *coordinator) HandleGameStart(rq api.StartGameRequest, w *Worker) api.Ou
 					W:    m.VideoW,
 					H:    m.VideoH,
 					A:    app.AspectRatio(),
-					S:    int(app.Scale()),
+					S:    int(m.VideoScale),
+					SM:   m.ScaleMethod,
 					Flip: app.Flipped(),
+					Rot:  app.Rotation(),
 				}})
 			if err != nil {
 				c.log.Error().Err(err).Msgf("wrap")
@@ -172,9 +172,15 @@ func (c *coordinator) HandleGameStart(rq api.StartGameRequest, w *Worker) api.Ou
 		}
 
 		m.AudioSrcHz = app.AudioSampleRate()
-		m.AudioFrames = w.conf.Encoder.Audio.Frames
 		m.VideoW, m.VideoH = app.ViewportSize()
-		m.VideoScale = app.Scale()
+		m.VideoScale, m.ScaleMethod = app.Scale()
+		coreConf := w.conf.Emulator.GetLibretroCoreConfig(game.System)
+		m.MaxThreads = coreConf.MaxThreads
+		m.VideoFPS = app.FPS()
+		m.VideoVFR = coreConf.VFR
+
+		m.SetPixFmt(app.PixFormat())
+		m.SetRot(app.Rotation())
 
 		r.SetMedia(m)
 
@@ -185,14 +191,9 @@ func (c *coordinator) HandleGameStart(rq api.StartGameRequest, w *Worker) api.Ou
 			return api.EmptyPacket
 		}
 
-		m.SetPixFmt(app.PixFormat())
-		m.SetRot(app.Rotation())
-
-		r.BindAppMedia()
+		r.InitMedia()
 		r.StartApp()
 	}
-
-	c.log.Debug().Msg("Start session input poll")
 
 	needsKbMouse := r.App().KbMouseSupport()
 
@@ -210,14 +211,18 @@ func (c *coordinator) HandleGameStart(rq api.StartGameRequest, w *Worker) api.Ou
 		Record:  w.conf.Recording.Enabled,
 		KbMouse: needsKbMouse,
 	}
+
 	if r.App().AspectEnabled() {
 		ww, hh := r.App().ViewportSize()
+		scale, scaleM := r.App().Scale()
 		response.AV = &api.AppVideoInfo{
 			W:    ww,
 			H:    hh,
 			A:    r.App().AspectRatio(),
-			S:    int(r.App().Scale()),
+			S:    int(scale),
+			SM:   scaleM,
 			Flip: r.App().Flipped(),
+			Rot:  r.App().Rotation(),
 		}
 	}
 

@@ -199,7 +199,7 @@
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
-   
+
 ------------------------------------------------------------------------------------
 This product bundles various third-party components under other open source licenses.
 
@@ -209,5 +209,24 @@ MIT License
 https://github.com/pion/webrtc/
 https://github.com/fogleman/nes
 https://github.com/poi5305/go-yuv2webRTC
-https://github.com/bchanx/animated-gameboy-in-css 
+https://github.com/bchanx/animated-gameboy-in-css
 
+LGPL-2.1+
+---------
+
+GStreamer core and plugins (dynamically linked at runtime):
+https://gstreamer.freedesktop.org/
+- gstreamer (core)
+- gst-plugins-base (videoconvert, videoscale, opusenc, audioresample, appsrc/sink)
+- gst-plugins-good (vp8enc, vp9enc)
+- go-gst bindings: https://github.com/go-gst/go-gst
+
+SDL2 (Zlib)
+-----------
+
+https://github.com/libsdl-org/SDL
+
+libretro cores (various licenses)
+---------------------------------
+Individual emulator cores are loaded as shared libraries at runtime.
+See each core's respective license.

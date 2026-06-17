@@ -226,7 +226,7 @@ func TestSavePersistence(t *testing.T) {
 
 			for range 10 {
 				v, _ := front.save()
-				if v == nil || len(v) == 0 {
+				if len(v) == 0 {
 					t.Errorf("couldn't persist the state")
 					t.Fail()
 				}

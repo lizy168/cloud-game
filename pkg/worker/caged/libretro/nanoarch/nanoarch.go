@@ -6,6 +6,7 @@ import (
 	"maps"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,7 +40,7 @@ type Nanoarch struct {
 	retropad InputState
 
 	keyboardCb    *C.struct_retro_keyboard_callback
-	LastFrameTime int64
+	LastFrameTime time.Time
 	LibCo         bool
 	meta          Metadata
 	options       map[string]string
@@ -53,7 +54,7 @@ type Nanoarch struct {
 		i   C.struct_retro_system_info
 		api C.unsigned
 	}
-	tickTime         int64
+	tickTime         time.Duration
 	cSaveDirectory   *C.char
 	cSystemDirectory *C.char
 	cUserName        *C.char
@@ -72,11 +73,15 @@ type Nanoarch struct {
 	hackSkipSameThreadSave   bool
 	limiter                  func(func())
 	log                      *logger.Logger
+
+	audioBuffCb    *C.struct_retro_audio_buffer_status_callback
+	lastFrameDelta float64 // most recent frame delta (ns)
+	audioDrift     float64 // cumulative timing drift for frameskip
 }
 
 type Handlers struct {
 	OnAudio        func(ptr unsafe.Pointer, frames int)
-	OnVideo        func(data []byte, delta int32, fi FrameInfo)
+	OnVideo        func(data []byte, delta time.Duration, fi FrameInfo)
 	OnDup          func()
 	OnSystemAvInfo func()
 }
@@ -128,7 +133,7 @@ var Nan0 = Nanoarch{
 	limiter:  func(fn func()) { fn() },
 	Handlers: Handlers{
 		OnAudio: func(unsafe.Pointer, int) {},
-		OnVideo: func([]byte, int32, FrameInfo) {},
+		OnVideo: func([]byte, time.Duration, FrameInfo) {},
 		OnDup:   func() {},
 	},
 }
@@ -185,6 +190,8 @@ func (n *Nanoarch) CoreLoad(meta Metadata) {
 	n.Aspect = meta.CoreAspectRatio
 	n.Video.gl.autoCtx = meta.AutoGlContext
 	n.Video.gl.enabled = meta.IsGlAllowed
+
+	Nan0.audioBuffCb = nil
 
 	thread.SwitchGraphics(n.Video.gl.enabled)
 
@@ -312,7 +319,7 @@ func (n *Nanoarch) LoadGame(path string) error {
 	n.serializeSize = C.bridge_retro_serialize_size(retroSerializeSize)
 	n.log.Info().Msgf("Save file size: %v", byteCountBinary(int64(n.serializeSize)))
 
-	Nan0.tickTime = int64(time.Second / time.Duration(n.sys.av.timing.fps))
+	Nan0.tickTime = time.Duration(float64(time.Second) / float64(n.sys.av.timing.fps))
 	if n.vfr {
 		n.log.Info().Msgf("variable framerate (VFR) is enabled")
 	}
@@ -345,12 +352,13 @@ func (n *Nanoarch) LoadGame(path string) error {
 		}
 	}
 
-	n.LastFrameTime = time.Now().UnixNano()
+	n.LastFrameTime = time.Now()
 
 	return nil
 }
 
 func (n *Nanoarch) Shutdown() {
+	Nan0.audioBuffCb = nil
 	if n.LibCo {
 		thread.Main(func() {
 			C.same_thread(retroUnloadGame)
@@ -387,6 +395,7 @@ func (n *Nanoarch) Shutdown() {
 	}
 	n.options = nil
 	n.options4rom = nil
+	Nan0.audioBuffCb = nil
 	C.free(unsafe.Pointer(n.cUserName))
 	C.free(unsafe.Pointer(n.cSaveDirectory))
 	C.free(unsafe.Pointer(n.cSystemDirectory))
@@ -487,10 +496,10 @@ func printOpenGLDriverInfo() {
 	var openGLInfo strings.Builder
 	openGLInfo.Grow(128)
 	version, vendor, renderrer, glsl := graphics.GLInfo()
-	openGLInfo.WriteString(fmt.Sprintf("\n[OpenGL] Version: %v\n", version))
-	openGLInfo.WriteString(fmt.Sprintf("[OpenGL] Vendor: %v\n", vendor))
-	openGLInfo.WriteString(fmt.Sprintf("[OpenGL] Renderer: %v\n", renderrer))
-	openGLInfo.WriteString(fmt.Sprintf("[OpenGL] GLSL Version: %v", glsl))
+	fmt.Fprintf(&openGLInfo, "\n[OpenGL] Version: %v\n", version)
+	fmt.Fprintf(&openGLInfo, "[OpenGL] Vendor: %v\n", vendor)
+	fmt.Fprintf(&openGLInfo, "[OpenGL] Renderer: %v\n", renderrer)
+	fmt.Fprintf(&openGLInfo, "[OpenGL] GLSL Version: %v", glsl)
 	Nan0.log.Debug().Msg(openGLInfo.String())
 }
 
@@ -599,14 +608,7 @@ func byteCountBinary(b int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func (m Metadata) HasHack(h string) bool {
-	for _, n := range m.Hacks {
-		if h == n {
-			return true
-		}
-	}
-	return false
-}
+func (m Metadata) HasHack(h string) bool { return slices.Contains(m.Hacks, h) }
 
 var (
 	retroAPIVersion              unsafe.Pointer
@@ -645,10 +647,14 @@ func coreVideoRefresh(data unsafe.Pointer, width, height uint, packed uint) {
 	// this is useful only for cores with variable framerate, for the fixed framerate cores this adds stutter
 	// !to find docs on Libretro refresh sync and frame times
 	dt := Nan0.tickTime
+	// Update frame timing only when needed: VFR mode or audio buffer callback.
+	if Nan0.vfr || Nan0.audioBuffCb != nil {
+		now := time.Now()
+		Nan0.lastFrameDelta = float64(now.Sub(Nan0.LastFrameTime))
+		Nan0.LastFrameTime = now
+	}
 	if Nan0.vfr {
-		t := time.Now().UnixNano()
-		dt = t - Nan0.LastFrameTime
-		Nan0.LastFrameTime = t
+		dt = time.Duration(Nan0.lastFrameDelta)
 	}
 
 	// when the core returns a duplicate frame
@@ -679,7 +685,7 @@ func coreVideoRefresh(data unsafe.Pointer, width, height uint, packed uint) {
 	// also we have an option of xN output frame magnification
 	// so, it may be rescaled
 
-	Nan0.Handlers.OnVideo(data_, int32(dt), FrameInfo{W: width, H: height, Stride: packed})
+	Nan0.Handlers.OnVideo(data_, dt, FrameInfo{W: width, H: height, Stride: packed})
 }
 
 //export coreAudioSampleBatch
@@ -688,6 +694,28 @@ func coreAudioSampleBatch(data unsafe.Pointer, frames C.size_t) C.size_t {
 		return frames
 	}
 	Nan0.Handlers.OnAudio(data, int(frames)<<1)
+
+	// Audio buffer status for the core (e.g. mGBA frameskip).
+	if Nan0.audioBuffCb != nil {
+		rawRate := int(Nan0.sys.av.timing.sample_rate)
+		expectedNs := float64(frames) / float64(rawRate) * 1e9
+		d := Nan0.lastFrameDelta - expectedNs
+		Nan0.audioDrift += d
+
+		occupancy := min(max(50-int(Nan0.audioDrift/(expectedNs*4)*50), 0), 100)
+
+		underrun := false
+		if Nan0.audioDrift > expectedNs*4 {
+			underrun = true
+			Nan0.audioDrift = 0
+		}
+		if Nan0.audioDrift < -expectedNs*4 {
+			Nan0.audioDrift = -expectedNs * 4
+		}
+
+		C.call_audio_buffer_status(Nan0.audioBuffCb, true, C.unsigned(occupancy), C.bool(underrun))
+	}
+
 	return frames
 }
 
@@ -813,7 +841,7 @@ func coreEnvironment(cmd C.unsigned, data unsafe.Pointer) C.bool {
 				break
 			}
 			cInfo := strings.Builder{}
-			cInfo.WriteString(fmt.Sprintf("Controller [%v] ", c))
+			fmt.Fprintf(&cInfo, "Controller [%v] ", c)
 			cd := (*[32]C.struct_retro_controller_description)(tp)
 			delim := ", "
 			n := int(controller.num_types)
@@ -821,7 +849,7 @@ func coreEnvironment(cmd C.unsigned, data unsafe.Pointer) C.bool {
 				if i == n-1 {
 					delim = ""
 				}
-				cInfo.WriteString(fmt.Sprintf("%v: %v%s", cd[i].id, C.GoString(cd[i].desc), delim))
+				fmt.Fprintf(&cInfo, "%v: %v%s", cd[i].id, C.GoString(cd[i].desc), delim)
 			}
 			//Nan0.log.Debug().Msgf("%v", cInfo.String())
 		}
@@ -829,6 +857,21 @@ func coreEnvironment(cmd C.unsigned, data unsafe.Pointer) C.bool {
 	case C.RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
 		Nan0.log.Debug().Msgf("Keyboard event callback was set")
 		Nan0.keyboardCb = (*C.struct_retro_keyboard_callback)(data)
+		return true
+	case C.RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK:
+		if data == nil {
+			Nan0.audioBuffCb = nil
+			return true
+		}
+
+		src := (*C.struct_retro_audio_buffer_status_callback)(data)
+		Nan0.audioBuffCb = new(C.struct_retro_audio_buffer_status_callback)
+		*Nan0.audioBuffCb = *src
+		Nan0.log.Info().Msg("Audio buffer status callback registered")
+		return true
+	case C.RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY:
+		latency := *(*C.unsigned)(data)
+		Nan0.log.Info().Uint("latency_ms", uint(latency)).Msg("audio latency requested")
 		return true
 	}
 	return false

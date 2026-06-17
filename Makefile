@@ -33,13 +33,6 @@ build.worker:
 		-ldflags "-w -s -X 'main.Version=$(GIT_VERSION)'" $(EXT_WFLAGS) \
 		-o bin/ ./cmd/worker
 
-build.worker-nopgo:
-	mkdir -p bin/
-	CGO_CFLAGS=${CGO_CFLAGS} CGO_LDFLAGS=${CGO_LDFLAGS} \
-		go build $(TRIMPATH) -buildmode=exe $(if $(GO_TAGS),-tags $(GO_TAGS),) \
-		-ldflags "-w -s -X 'main.Version=$(GIT_VERSION)'" $(EXT_WFLAGS) \
-		-o bin/ ./cmd/worker
-
 build: build.coordinator build.worker
 
 test:
@@ -57,9 +50,16 @@ dev.build-local:
 
 dev.run: dev.build-local
 ifeq ($(OS),Windows_NT)
-	./bin/coordinator.exe &	./bin/worker.exe
+	./bin/coordinator.exe & ./bin/worker.exe
 else
 	./bin/coordinator &	./bin/worker
+endif
+
+dev.run.trace: dev.build-local
+ifeq ($(OS),Windows_NT)
+	./bin/coordinator.exe & GST_DEBUG_COLOR_MODE=off GST_TRACERS="latency(flags=pipeline+element)" GST_DEBUG=GST_TRACER:7 GST_DEBUG_FILE=traces.log ./bin/worker.exe
+else
+	GST_DEBUG_COLOR_MODE=off GST_TRACERS="latency(flags=pipeline+element)" GST_DEBUG=GST_TRACER:7 GST_DEBUG_FILE=traces.log ./bin/worker &	./bin/coordinator
 endif
 
 dev.run.debug:

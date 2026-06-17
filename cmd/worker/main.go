@@ -1,8 +1,6 @@
 package main
 
 import (
-	"time"
-
 	"github.com/giongto35/cloud-game/v3/pkg/config"
 	"github.com/giongto35/cloud-game/v3/pkg/logger"
 	"github.com/giongto35/cloud-game/v3/pkg/os"
@@ -31,7 +29,6 @@ func run() {
 	}
 	w.Start(done)
 	<-done
-	time.Sleep(100 * time.Millisecond) // hack
 	if err := w.Stop(); err != nil {
 		log.Error().Err(err).Msg("shutdown fail")
 	}

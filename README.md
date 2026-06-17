@@ -54,25 +54,18 @@ a better sense of performance.
 ## Development environment
 
 * Install [Go](https://golang.org/doc/install)
-* Install [libvpx](https://www.webmproject.org/code/), [libx264](https://www.videolan.org/developers/x264.html)
-  , [libopus](http://opus-codec.org/), [pkg-config](https://www.freedesktop.org/wiki/Software/pkg-config/)
-  , [sdl2](https://wiki.libsdl.org/Installation), [libyuv](https://chromium.googlesource.com/libyuv/libyuv/)+[libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo)
+* Install GStreamer and SDL2:
 
 ```
 # Ubuntu / Windows (WSL2)
-apt-get install -y make gcc pkg-config libvpx-dev libx264-dev libopus-dev libsdl2-dev libyuv-dev libjpeg-turbo8-dev libspeexdsp-dev
+apt-get install -y make gcc pkg-config libsdl2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
-# MacOS
-brew install pkg-config libvpx x264 opus sdl2 jpeg-turbo speexdsp
+# macOS
+brew install pkg-config sdl2 gstreamer gst-plugins-base gst-plugins-good
 
 # Windows (MSYS2)
-pacman -Sy --noconfirm --needed git make mingw-w64-ucrt-x86_64-{gcc,pkgconf,dlfcn,libvpx,opus,libx264,SDL2,libyuv,libjpeg-turbo,speexdsp}
+pacman -Sy --noconfirm --needed git make mingw-w64-ucrt-x86_64-{gcc,pkgconf,dlfcn,SDL2,gstreamer,gst-plugins-base,gst-plugins-good}
 ```
-
-(You don't need to download libyuv on macOS)
-
-(If you need to use the app on an older version of Ubuntu that does not have libyuv (when it says: unable to locate package libyuv-dev), you can add a custom apt repository: 
-`add sudo add-apt-repository ppa:savoury1/graphics`)
 
 Because the coordinator and workers need to run simultaneously. Workers connect to the coordinator.
 
@@ -97,7 +90,7 @@ It will spawn a docker environment and you can access the service on `localhost:
 
 ## Configuration
 
-The default configuration file is stored in the [`pkg/configs/config.yaml`](pkg/config/config.yaml) file.
+The default configuration file is stored in the [`pkg/config/config.yaml`](pkg/config/config.yaml) file.
 This configuration file will be embedded into the applications and loaded automatically during startup.
 In order to change the default parameters you can specify environment variables with the `CLOUD_GAME_` prefix, or place
 a custom `config.yaml` file into one of these places: just near the application, `.cr` folder in user's home, or

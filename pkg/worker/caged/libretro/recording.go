@@ -2,6 +2,7 @@ package libretro
 
 import (
 	"time"
+	"unsafe"
 
 	"github.com/giongto35/cloud-game/v3/pkg/config"
 	"github.com/giongto35/cloud-game/v3/pkg/logger"
@@ -33,7 +34,7 @@ func WithRecording(fe Emulator, rec bool, user string, game string, conf config.
 func (r *RecordingFrontend) SetAudioCb(fn func(app.Audio)) {
 	r.Emulator.SetAudioCb(func(audio app.Audio) {
 		if r.IsRecording() {
-			pcm := audio.Data
+			pcm := unsafe.Slice((*int16)(unsafe.Pointer(unsafe.SliceData(audio.Data))), len(audio.Data)>>1)
 			// example: 1600 = x / 1000 * 48000 * 2
 			l := time.Duration(float64(len(pcm)) / float64(r.AudioSampleRate()<<1) * 1000000000)
 			r.rec.WriteAudio(recorder.Audio{Samples: pcm, Duration: l})

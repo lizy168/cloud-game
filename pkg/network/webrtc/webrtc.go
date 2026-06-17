@@ -220,27 +220,27 @@ func (p *Peer) Channel(label string, conf *webrtc.DataChannelInit, onMessage fun
 	return ch, nil
 }
 
-func (p *Peer) SendAudio(dat []byte, dur int32) {
-	if err := p.send(dat, int64(dur), p.a.WriteSample); err != nil {
+func (p *Peer) SendAudio(dat []byte, dur time.Duration) {
+	if err := p.send(dat, dur, p.a.WriteSample); err != nil {
 		p.log.Error().Err(err).Send()
 	}
 }
 
-func (p *Peer) SendVideo(data []byte, dur int32) {
-	if err := p.send(data, int64(dur), p.v.WriteSample); err != nil {
+func (p *Peer) SendVideo(data []byte, dur time.Duration) {
+	if err := p.send(data, dur, p.v.WriteSample); err != nil {
 		p.log.Error().Err(err).Send()
 	}
 }
 
 func (p *Peer) SendData(data []byte) { _ = p.d.Send(data) }
 
-func (p *Peer) send(data []byte, duration int64, fn func(media.Sample) error) error {
+func (p *Peer) send(data []byte, duration time.Duration, fn func(media.Sample) error) error {
 	sample, _ := samplePool.Get().(*media.Sample)
 	if sample == nil {
 		sample = new(media.Sample)
 	}
 	sample.Data = data
-	sample.Duration = time.Duration(duration)
+	sample.Duration = duration
 	err := fn(*sample)
 	if err != nil {
 		return err

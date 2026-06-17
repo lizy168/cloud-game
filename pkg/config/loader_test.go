@@ -9,10 +9,8 @@ import (
 func TestConfigEnv(t *testing.T) {
 	var out WorkerConfig
 
-	_ = os.Setenv("CLOUD_GAME_ENCODER_AUDIO_FRAMES[0]", "10")
-	_ = os.Setenv("CLOUD_GAME_ENCODER_AUDIO_FRAMES[1]", "5")
-	defer func() { _ = os.Unsetenv("CLOUD_GAME_ENCODER_AUDIO_FRAMES[0]") }()
-	defer func() { _ = os.Unsetenv("CLOUD_GAME_ENCODER_AUDIO_FRAMES[1]") }()
+	_ = os.Setenv("CLOUD_GAME_ENCODER_AUDIO_FRAME", "10")
+	defer func() { _ = os.Unsetenv("CLOUD_GAME_ENCODER_AUDIO_FRAME") }()
 
 	_ = os.Setenv("CLOUD_GAME_EMULATOR_LIBRETRO_CORES_LIST_PCSX_OPTIONS__PCSX_REARMED_DRC", "x")
 	defer func() {
@@ -24,11 +22,9 @@ func TestConfigEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i, x := range []float32{10, 5} {
-		if out.Encoder.Audio.Frames[i] != x {
-			t.Errorf("%v is not [10, 5]", out.Encoder.Audio.Frames)
-			t.Failed()
-		}
+	if out.Encoder.Audio.Frame != 10 {
+		t.Errorf("%v is not [10]", out.Encoder.Audio.Frame)
+		t.Failed()
 	}
 
 	v := out.Emulator.Libretro.Cores.List["pcsx"].Options["pcsx_rearmed_drc"]

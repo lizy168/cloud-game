@@ -57,9 +57,11 @@ type (
 	AppVideoInfo struct {
 		W    int     `json:"w"`
 		H    int     `json:"h"`
-		S    int     `json:"s"`
 		A    float32 `json:"a"`
-		Flip bool    `json:"flip,omitempty"`
+		S    int     `json:"s"`
+		SM   string  `json:"sm,omitempty"`
+		Flip bool    `json:"flip"`
+		Rot  uint    `json:"rot"`
 	}
 
 	LibGameListInfo struct {

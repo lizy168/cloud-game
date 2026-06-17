@@ -131,6 +131,7 @@ func (w *Worker) Start(done chan struct{}) {
 }
 
 func (w *Worker) Stop() error {
+	w.Reset()
 	var err error
 	for _, s := range w.services {
 		if s != nil {

@@ -216,7 +216,20 @@ emulator:
             #   - altRepo (bool) prioritize secondary repo as the download source
             #   - lib (string)
             #   - roms ([]string)
-            #   - scale (int) scales the output video frames by this factor.
+            #   - scale (int) [0 - none]
+            #       scales the output video frames by this factor.
+            #   - scaleMethod (string) [bilinear2] -- Gstreamer method of scaling
+            #        nearest-neighbour (0) – Nearest Neighbour
+            #        bilinear (1) – Bilinear (2-tap)
+            #        4-tap (2) – 4-tap Sinc
+            #        lanczos (3) – Lanczos
+            #        bilinear2 (4) – Bilinear (multi-tap)
+            #        sinc (5) – Sinc (multi-tap)
+            #        hermite (6) – Hermite (multi-tap)
+            #        spline (7) – Spline (multi-tap)
+            #        catrom (8) – Catmull-Rom (multi-tap)
+            #        mitchell (9) – Mitchell (multi-tap)
+            #   - maxThreads (int) [0] -- cap the number of threads used by the encoder
             #   - folder (string)
             #       By default emulator selection is based on the folder named as cores
             #       in the list (i.e. nes, snes) but if you specify folder param,
@@ -259,9 +272,11 @@ emulator:
                 gba:
                     lib: mgba_libretro
                     roms: ["gba", "gbc"]
+                    maxThreads: 4
                     options:
-                        mgba_audio_low_pass_filter: disabled
-                        mgba_audio_low_pass_range: 50
+                        mgba_audio_low_pass_filter: enabled
+                        mgba_audio_low_pass_range: 60
+                        # mgba_frameskip: auto
                 pcsx:
                     lib: pcsx_rearmed_libretro
                     roms: ["cue", "chd"]
@@ -269,20 +284,25 @@ emulator:
                     folder: psx
                     # see: https://github.com/libretro/pcsx_rearmed/blob/master/frontend/libretro_core_options.h
                     options:
-                        "pcsx_rearmed_show_bios_bootlogo": enabled
-                        "pcsx_rearmed_drc": enabled
-                        "pcsx_rearmed_display_internal_fps": disabled
+                        pcsx_rearmed_show_bios_bootlogo: enabled
+                        pcsx_rearmed_drc: enabled
+                        pcsx_rearmed_frameskip_type: auto
+                        pcsx_rearmed_spu_interpolation: gaussian
+                        pcsx_rearmed_rgb32_output: enabled
                 # MAME core requires additional manual setup, please read:
                 # https://docs.libretro.com/library/fbneo/
                 mame:
                     lib: fbneo_libretro
                     folder: mame
                     roms: ["zip"]
+                    scaleMethod: bilinear2
                 nes:
                     lib: nestopia_libretro
                     roms: ["nes"]
                     options:
-                        nestopia_aspect: "uncorrected"
+                        nestopia_aspect: "4:3"
+                        nestopia_overscan_v_top: 0
+                        nestopia_overscan_v_bottom: 0
                 snes:
                     lib: snes9x_libretro
                     roms: ["smc", "sfc", "swc", "fig", "bs"]
@@ -328,57 +348,45 @@ emulator:
                         3: [257, 513]
                     options:
                         "dosbox_pure_conf": "outside"
-                        "dosbox_pure_force60fps": "true"
+                        # "dosbox_pure_force60fps": "true"
 
 encoder:
     audio:
-        # audio frame duration needed for WebRTC (Opus)
-        # most of the emulators have ~1400 samples per a video frame,
-        # so we keep the frame buffer roughly half of that size or 2 RTC packets per frame
-        # (deprecated) due to frames
-        frame: 10
-        # dynamic frames for Opus encoder
-        frames:
-            - 10
-        # speex (2), linear (1) or nearest neighbour (0) audio resampler
-        # linear should sound slightly better than 0
+        codec: opus
+        # resampler qualiy: 0 - low, 1 - medium, 2 - best
         resampler: 2
     video:
-        # h264, vpx (vp8) or vp9
-        codec: h264
+        # vp8 | vp9
+        codec: vp8
         # Threaded encoder if supported, 0 - auto, 1 - nope, >1 - multi-threaded
         threads: 0
-        # see: https://trac.ffmpeg.org/wiki/Encode/H.264
-        h264:
-            # crf, cbr
-            mode: crf
-            # Constant Rate Factor (CRF) 0-51 (default: 23)
-            crf: 23
-            # Rate control options
-            # set the maximum bitrate
-            maxRate: 0
-            # set the expected client buffer size
-            bufSize: 0
-            # ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow, placebo
-            preset: superfast
-            # baseline, main, high, high10, high422, high444
-            profile: baseline
-            # film, animation, grain, stillimage, psnr, ssim, fastdecode, zerolatency
-            tune: zerolatency
-            # 0-3
-            logLevel: 0
-        # see: https://www.webmproject.org/docs/encoder-parameters
-        vpx:
-            # target bitrate (KBit/s)
-            bitrate: 1200
-            # force keyframe interval
-            keyframeInterval: 120
-            # speed/quality tradeoff (0=auto, 1=slow, 8=fast)
-            cpuUsed: 0
-            # log2 of tile columns (0=auto, 0-6). VP9 only.
-            tileColumns: 0
-            # content tuning: "screen" for games. VP9 only.
-            tune: screen
+        # max interval between keyframes (0 = encoder default)
+        keyframeInterval: 300
+        # colorimetry caps: bt601 | bt709 | smpte240m
+        colorimetry: bt709,chroma-site=jpeg
+    list:
+        opus:
+            encoder: opusenc
+            params: audio-type=restricted-lowdelay complexity=8 bitrate=96000 frame-size=5
+        # h264 (requires gstreamer1.0-plugins-ugly + x264 [GPL]):
+        #   encoder: x264enc
+        #   params: speed-preset=superfast tune=zerolatency pass=quant quantizer=20
+        #   caps: video/x-h264,stream-format=byte-stream,alignment=au
+        vp8:
+            encoder: vp8enc
+            params: >-
+                keyframe-mode=disabled tuning=ssim cpu-used=6 target-bitrate=3200000 deadline=1 sharpness=1 end-usage=cbr
+                static-threshold=100
+                error-resilient=default+partitions overshoot=20 undershoot=100
+            caps: video/x-vp8
+        vp9:
+            encoder: vp9enc
+            params: >-
+                keyframe-mode=disabled tuning=ssim cpu-used=6 target-bitrate=3200000 deadline=1 sharpness=1 end-usage=cbr
+                static-threshold=100
+                error-resilient=default+partitions overshoot=20 undershoot=100
+                tile-columns=6 lag-in-frames=0 row-mt=true
+            caps: video/x-vp9
 
 # game recording
 # (experimental)

@@ -86,6 +86,8 @@ type LibretroCoreConfig struct {
 	Roms            []string
 	SaveStateFs     string
 	Scale           float64
+	ScaleMethod     string
+	MaxThreads      int
 	UniqueSaveDir   bool
 	UsesLibCo       bool
 	VFR             bool

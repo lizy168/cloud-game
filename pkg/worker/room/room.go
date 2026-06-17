@@ -3,8 +3,10 @@ package room
 import (
 	"iter"
 	"sync"
+	"time"
 
 	"github.com/giongto35/cloud-game/v3/pkg/worker/caged/app"
+	"github.com/giongto35/cloud-game/v3/pkg/worker/media"
 )
 
 type MediaPipe interface {
@@ -14,14 +16,10 @@ type MediaPipe interface {
 	Init() error
 	// Reinit initializes video and audio pipes with the new settings.
 	Reinit() error
-	// PushAudio pushes the 16bit PCM audio frames into an encoder.
-	// Because we need to fill the buffer, the SetAudioCb should be
-	// used in order to get the result.
-	PushAudio([]int16)
-	// ProcessVideo returns encoded video frame.
-	ProcessVideo(app.Video) []byte
-	// SetAudioCb sets a callback for encoded audio data with its frame duration (ns).
-	SetAudioCb(func(data []byte, duration int32))
+	// ProcessAudio pushes 16bit PCM audio frames into the encoder.
+	ProcessAudio([]byte, func([]byte, time.Duration))
+	// ProcessVideo pushes a video frame into the encoder.
+	ProcessVideo(media.Video, func([]byte, time.Duration))
 }
 
 type SessionManager[T Session] interface {
@@ -36,8 +34,8 @@ type SessionManager[T Session] interface {
 
 type Session interface {
 	Disconnect()
-	SendAudio([]byte, int32)
-	SendVideo([]byte, int32)
+	SendAudio([]byte, time.Duration)
+	SendVideo([]byte, time.Duration)
 	SendData([]byte)
 }
 
@@ -57,34 +55,34 @@ type Room[T Session] struct {
 }
 
 func NewRoom[T Session](id string, app app.App, um SessionManager[T], media MediaPipe) *Room[T] {
-	room := &Room[T]{id: id, app: app, users: um, media: media}
-	if app != nil && media != nil {
-		room.InitVideo()
-		room.InitAudio()
-	}
-	return room
+	return &Room[T]{id: id, app: app, users: um, media: media}
 }
 
-func (r *Room[T]) InitAudio() {
-	r.app.SetAudioCb(func(a app.Audio) { r.media.PushAudio(a.Data) })
-	r.media.SetAudioCb(func(d []byte, l int32) {
-		for u := range r.users.Values() {
-			u.SendAudio(d, l)
-		}
+func (r *Room[T]) InitMedia() {
+	r.app.SetAudioCb(func(a app.Audio) {
+		r.media.ProcessAudio(a.Data, r.sendAudio)
 	})
-}
-
-func (r *Room[T]) InitVideo() {
 	r.app.SetVideoCb(func(v app.Video) {
-		data := r.media.ProcessVideo(v)
-		for u := range r.users.Values() {
-			u.SendVideo(data, v.Duration)
-		}
+		r.media.ProcessVideo(media.Video{
+			Frame:    media.RawFrame{Data: v.Frame.Data, W: v.Frame.W, H: v.Frame.H, Stride: v.Frame.Stride},
+			Duration: v.Duration,
+		}, r.sendVideo)
 	})
+}
+
+func (r *Room[T]) sendAudio(data []byte, dur time.Duration) {
+	for u := range r.users.Values() {
+		u.SendAudio(data, dur)
+	}
+}
+
+func (r *Room[T]) sendVideo(data []byte, dur time.Duration) {
+	for u := range r.users.Values() {
+		u.SendVideo(data, dur)
+	}
 }
 
 func (r *Room[T]) App() app.App         { return r.app }
-func (r *Room[T]) BindAppMedia()        { r.InitAudio(); r.InitVideo() }
 func (r *Room[T]) Id() string           { return r.id }
 func (r *Room[T]) SetApp(app app.App)   { r.app = app }
 func (r *Room[T]) SetMedia(m MediaPipe) { r.media = m }

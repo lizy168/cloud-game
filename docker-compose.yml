@@ -1,33 +1,39 @@
 services:
+    cloud-game:
+        build: .
+        image: cloud-game-local
+        container_name: cloud-game-local
+        depends_on:
+            - xvfb
+        environment:
+            - DISPLAY=:99
+            - MESA_GL_VERSION_OVERRIDE=4.5
+            - CLOUD_GAME_WEBRTC_SINGLEPORT=8443
+            # - CLOUD_GAME_WEBRTC_ICEIPMAP=127.0.0.1
+            - CLOUD_GAME_COORDINATOR_DEBUG=true
+            - CLOUD_GAME_WORKER_DEBUG=true
+            - CLOUD_GAME_ENCODER_VIDEO_CODEC=vp8
+            # - PION_LOG_TRACE=all
+        ports:
+            - "8000:8000"
+            - "9000:9000"
+            - "8443:8443/udp"
+        command: >
+            bash -c "./coordinator & while [ ! -S /tmp/.X11-unix/X99 ]; do sleep 0.1; done; ./worker"
+        volumes:
+            - ./assets/cores:/usr/local/share/cloud-game/assets/cores
+            - ./assets/games:/usr/local/share/cloud-game/assets/games
+            - x11:/tmp/.X11-unix
 
-  cloud-game:
-    build: .
-    image: cloud-game-local
-    container_name: cloud-game-local
-    environment:
-      - DISPLAY=:99
-      - MESA_GL_VERSION_OVERRIDE=4.5
-      - CLOUD_GAME_WEBRTC_SINGLEPORT=8443
-      # - CLOUD_GAME_WEBRTC_ICEIPMAP=127.0.0.1
-      - CLOUD_GAME_COORDINATOR_DEBUG=true
-      - CLOUD_GAME_WORKER_DEBUG=true
-      # - PION_LOG_TRACE=all
-    ports:
-      - "8000:8000"
-      - "9000:9000"
-      - "8443:8443/udp"
-    command: >
-      bash -c "./coordinator & ./worker"
-    volumes:
-      - ./assets/cores:/usr/local/share/cloud-game/assets/cores
-      - ./assets/games:/usr/local/share/cloud-game/assets/games
-      - x11:/tmp/.X11-unix
-
-  xvfb:
-    image: kcollins/xvfb:latest
-    volumes:
-      - x11:/tmp/.X11-unix
-    command: [ ":99", "-screen", "0", "320x240x16" ]
+    xvfb:
+        image: kcollins/xvfb:latest
+        entrypoint: ["sh", "-c"]
+        command:
+            [
+                "rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 && exec Xvfb :99 -screen 0 320x240x16",
+            ]
+        volumes:
+            - x11:/tmp/.X11-unix
 
 volumes:
-  x11:
+    x11:

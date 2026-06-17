@@ -1,80 +1,48 @@
 # ----------------------------------------------------------------------------------
-#  Publish Docker images from the current master branch or v* into Github repository
+#  Publish Docker image from the current master branch or v* into Github repository
 # ----------------------------------------------------------------------------------
 
 name: docker-publish
 
 on:
-    push:
-        branches:
-            - master
-        tags:
-            - "v*"
-    workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
 
 jobs:
-    docker-publish:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            packages: write
-        steps:
-            - uses: actions/checkout@v3
-            - run: echo "V=$(./scripts/version.sh)" >> $GITHUB_ENV
-            - uses: docker/setup-buildx-action@v2
-            - uses: docker/login-action@v2
-              with:
-                  registry: ghcr.io
-                  username: ${{ github.repository_owner }}
-                  password: ${{ secrets.GITHUB_TOKEN }}
-
-            - name: Docker meta (full)
-              id: meta
-              uses: docker/metadata-action@v4
-              with:
-                  images: ghcr.io/${{ github.repository }}/cloud-game
-                  tags: |
-                      type=ref,event=branch
-                      type=semver,pattern={{version}}
-                      type=semver,pattern={{major}}.{{minor}}
-                      type=semver,pattern={{major}}
-
-            - uses: docker/build-push-action@v4
-              with:
-                  build-args: VERSION=${{ env.V }}
-                  context: .
-                  push: true
-                  provenance: false
-                  sbom: false
-                  tags: |
-                      ${{ steps.meta.outputs.tags }}
-                  labels: |
-                      ${{ steps.meta.outputs.labels }}
-                  cache-from: type=gha
-                  cache-to: type=gha,mode=max
-
-            - name: Docker meta (worker no-pgo)
-              id: meta-nopgo
-              uses: docker/metadata-action@v4
-              with:
-                  images: ghcr.io/${{ github.repository }}/cloud-game-worker
-                  tags: |
-                      type=ref,event=branch,suffix=-nopgo
-                      type=semver,pattern={{version}},suffix=-nopgo
-                      type=semver,pattern={{major}}.{{minor}},suffix=-nopgo
-                      type=semver,pattern={{major}},suffix=-nopgo
-
-            - uses: docker/build-push-action@v4
-              with:
-                  file: Dockerfile.worker
-                  build-args: VERSION=${{ env.V }}
-                  context: .
-                  push: true
-                  provenance: false
-                  sbom: false
-                  tags: |
-                      ${{ steps.meta-nopgo.outputs.tags }}
-                  labels: |
-                      ${{ steps.meta-nopgo.outputs.labels }}
-                  cache-from: type=gha
-                  cache-to: type=gha,mode=max
+  docker-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: echo "V=$(./scripts/version.sh)" >> $GITHUB_ENV
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ghcr.io/${{ github.repository }}/cloud-game
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+      - uses: docker/setup-buildx-action@v2
+      - uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v4
+        with:
+          build-args: VERSION=${{ env.V }}
+          context: .
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

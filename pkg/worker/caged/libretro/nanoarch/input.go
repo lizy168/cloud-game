@@ -85,7 +85,7 @@ func (s *InputState) SetInput(port int, data []byte) {
 
 // SyncToCache syncs input state to C-side cache before Run().
 func (s *InputState) SyncToCache() {
-	for p := uint(0); p < maxPort; p++ {
+	for p := range uint(maxPort) {
 		keys := atomic.LoadUint32(&s[p].keys)
 		axes := atomic.LoadInt64(&s[p].axes)
 		triggers := atomic.LoadInt32(&s[p].triggers)

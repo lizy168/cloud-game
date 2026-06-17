@@ -2,6 +2,7 @@ package room
 
 import (
 	"testing"
+	"time"
 
 	"github.com/giongto35/cloud-game/v3/pkg/com"
 )
@@ -15,12 +16,12 @@ type tSession struct {
 	connected bool
 }
 
-func (t *tSession) SendAudio([]byte, int32) {}
-func (t *tSession) SendVideo([]byte, int32) {}
-func (t *tSession) SendData([]byte)         {}
-func (t *tSession) Connect()                { t.connected = true }
-func (t *tSession) Disconnect()             { t.connected = false }
-func (t *tSession) Id() sKey                { return t.id }
+func (t *tSession) SendAudio([]byte, time.Duration) {}
+func (t *tSession) SendVideo([]byte, time.Duration) {}
+func (t *tSession) SendData([]byte)                 {}
+func (t *tSession) Connect()                        { t.connected = true }
+func (t *tSession) Disconnect()                     { t.connected = false }
+func (t *tSession) Id() sKey                        { return t.id }
 
 type lookMap struct {
 	com.NetMap[sKey, *tSession]
